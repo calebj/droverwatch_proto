@@ -1,0 +1,15 @@
+[submodule "pyRF95"]
+	path = pyRF95
+	url = git@github.com:calebj/pyRF95.git
+[submodule "tag/libraries/Adafruit_LSM9DS1"]
+	path = tag/libraries/Adafruit_LSM9DS1
+	url = https://github.com/adafruit/Adafruit_LSM9DS1.git
+[submodule "tag/libraries/Adafruit_Sensor"]
+	path = tag/libraries/Adafruit_Sensor
+	url = https://github.com/adafruit/Adafruit_Sensor.git
+[submodule "tag/libraries/RadioHead"]
+	path = tag/libraries/RadioHead
+	url = https://github.com/adafruit/RadioHead.git
+[submodule "basestation/pyRF95"]
+	path = basestation/pyRF95
+	url = https://github.com/calebj/pyRF95.git
