@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 from math import log10
 from multiprocessing.connection import Client as mpClient
 import os
@@ -12,7 +13,6 @@ import threading
 import traceback
 
 import board
-from gpiozero import Button, LED, RGBLED
 import neopixel
 import RPi.GPIO as GPIO
 
@@ -31,7 +31,6 @@ except ImportError:
     print("Sendgrid not available")
     sendgrid = None
 
-
 try:
     from pyRF95 import rf95
 except ImportError:
@@ -42,7 +41,7 @@ except ImportError:
 EMAIL = ''
 SMS = '+1'
 
-PLT_ADDRESS = ("10.42.0.1", 56700)
+PLT_DEFAULT_PORT = 56700
 
 TWILIO_SID = "ACe3e295a5969e040e0ca29e0061c8ee2f"
 TWILIO_AUTH  = "03820cb03da55ec7024e87f8336b6452"
@@ -220,8 +219,8 @@ class LCDThread(threading.Thread):
 
 
 class AlertHarness:
-    def __init__(self, test: bool = False):
-        if test:
+    def __init__(self, args):
+        if args.test:
             self.radio = None
         else:
             r = self.radio = rf95.RF95(cs=RF95_SPI_CS, int_pin=RF95_IRQ_PIN, reset_pin=RF95_RESET_PIN)
@@ -229,42 +228,69 @@ class AlertHarness:
             r.set_modem_config(rf95.Bw500Cr45Sf128)
             r.set_frequency(RF95_FREQ)
 
+        self._args = args
+
+        self.test = args.test
+        self.use_tts = args.tts
+        self.use_alarm = args.alarm
+        self.numbers = args.phone
+        self.emails = args.email
+
         self.stopping = False
-        self.test = test
         self.leds = neopixel.NeoPixel(NEOPIXEL_PIN, 1, pixel_order=neopixel.RGBW)
 
-        lt = self.lcd_thread = LCDThread(SEGMENT_PINS, DIGIT_PINS)
-        lt.start()
+        self.lcd_thread = LCDThread(SEGMENT_PINS, DIGIT_PINS)
 
         self.trouble_tags = set()
         self.active_tags = set()
 
-        self.run_thread = BackgroundThread(self.run, start=False)
-        self.monitor_thread = BackgroundThread(self.status_loop)
+        self.monitor_thread = BackgroundThread(self.status_loop, start=False)
         self.announce_thread = None
 
         if twilio is not None:
             self.twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
+        else:
+            self.twilio_client = None
 
         if sendgrid is not None:
             self.mail_client = sendgrid.SendGridAPIClient(apikey=SENDGRID_API_KEY)
+        else:
+            self.mail_client = None
 
         self.conn = None
 
-    def send_sms(self, number: str, body: str):
-        if self.twilio_client is None:
+    def set_plotter(self, address: str, port: int = PLT_DEFAULT_PORT):
+        if isinstance(port, str):
+            port = int(port)
+        elif port is None:
+            port = PLT_DEFAULT_PORT
+
+        self.conn = mpClient((address, port))
+
+    def send_sms(self, body: str):
+        if self.twilio_client is None or not self.numbers:
             return False
 
-        return self.twilio_client.messages.create(to=number, from_=TWILIO_NUMBER, body=body)
+        ret = []
+        for number in self.numbers:
+            msg = self.twilio_client.messages.create(to=number, from_=TWILIO_NUMBER, body=body)
+            ret.append(msg)
 
-    def send_email(self, to_address: str, subject: str, body: str):
-        if self.mail_client is None:
+        return ret
+
+    def send_email(self, subject: str, body: str):
+        if self.mail_client is None or not self.emails:
             return False
+
+        personalization = Personalization()
+
+        for email in self.emails:
+            personalization.add_to(email)
 
         from_email = Email(SENDGRID_FROM_ADDRESS)
-        to_email = Email(to_address)
         content = Content("text/plain", body)
-        mail = Mail(from_email, subject, to_email, content)
+        mail = Mail(from_email, subject, None, content)
+        mail.add_personalization(personalization)
         return self.mail_client.client.mail.send.post(request_body=mail.get())
 
     def get_packet(self, timeout=None) -> RadioPacket:
@@ -300,12 +326,11 @@ class AlertHarness:
         print("Test mode: will exit in 5 seconds")
         sleep(5)
 
-    def start(self):
-        self.run_thread.start()
-
     def run(self):
         # Initialize everything as OK
         self.clear_alert()
+        self.monitor_thread.start()
+        self.lcd_thread.start()
 
         if self.test:
             return self.run_test()
@@ -354,18 +379,16 @@ class AlertHarness:
     def show_alert(self, tag: int):
         print("showing alert for tag", tag)
         self.lcd_thread.set_value(tag)
-        #self.led.pulse(fade_in_time = 1, fade_out_time = 1, on_color = (1,0,0), background = True)
         self.leds[0] = (255,0,0,0)
 
         msg = "Tag %s is in distress!" % tag
-        #self.announce(msg)
+        self.announce(msg)
 
-        #self.send_email("kenzford8@gmail.com", "Bovine Intervention alert", msg)
-        #self.send_sms("+12102793921", "Bovine Intervention alert: " + msg)
+        self.send_email("Bovine Intervention alert", msg)
+        self.send_sms("Bovine Intervention alert: " + msg)
 
     def clear_alert(self):
         print("clearing alert")
-        #self.led.blink(on_time = 0.1, off_time = 5 - 0.1, on_color = (0,1,0), background = True)
         self.leds[0] = (0,255,0,0)
         self.lcd_thread.clear()
 
@@ -373,6 +396,7 @@ class AlertHarness:
             self.announce_thread.stop()  # block
 
     def announce_cb(self, result):
+        # reset to None
         self.announce_thread = None
 
     def announce(self, text: str):
@@ -383,10 +407,8 @@ class AlertHarness:
 
     def shutdown(self):
         self.stopping = True
-        #self.led.close()
         self.lcd_thread.stop()
         self.monitor_thread.join()
-        self.run_thread.join()
         self.leds[0] = (0,0,0,0)
 
         if self.announce_thread:
@@ -397,34 +419,31 @@ class AlertHarness:
 
 
 if __name__ == "__main__":
-    if rf95 is None:
-        testing = True
+    parser = argparse.ArgumentParser(description="DroverWatch base station")
+    parser.add_argument("-n", "--phone", help="Phone to send alerts to", action="append")
+    parser.add_argument("-e", "--email", help="Phone to send alerts to", action="append")
+    parser.add_argument("-t", "--test", help="Test mode", action="store_true")
+    parser.add_argument("--alarm", help="Use sound alarm", action="store_true")
+    parser.add_argument("--tts", help="Use TTS", action="store_true")
+    parser.add_argument("-p", "--plotter", help="plotter address[:port] (default 56700)")
+
+    args = parser.parse_args()
+
+    if rf95 is None and not args.test:
+        args.test = True
         print("Radio lib unavailable, entering test mode")
-    else:
-        testing = False
 
     print("Initializing...")
-    harness = AlertHarness(test=testing)
+    harness = AlertHarness(args)
 
-    try:
+    if args.plotter:
         print("Connecting to plotter...")
-        conn = mpClient(PLT_ADDRESS)
-    except Exception as e:
-        print("Error!", e)
-        conn = None
+        plt_args = args.plotter.split(':')
+        harness.set_plotter(*plt_args[:2])
 
     try:
-        harness.conn = conn
-        harness.start()
-        print("Running.")
-
-        if plotter:
-            plt = plotter.Plotter(harness)
-            plt.run()
-        else:
-            while harness.run_thread.isAlive():
-                time.sleep(0.1)
-
+        print("Started.")
+        harness.run()
     except KeyboardInterrupt:
         pass
     finally:

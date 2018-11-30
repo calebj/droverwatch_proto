@@ -1,0 +1,12 @@
+# pyRF95 is a fork for now
+
+# LCD
+RPi.GPIO
+
+# Neopixel
+adafruit-circuitpython-neopixel
+Adafruit-Blinka
+
+# alerts
+twilio
+sendgrid

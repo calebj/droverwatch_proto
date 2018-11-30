@@ -1,6 +1,3 @@
-[submodule "pyRF95"]
-	path = pyRF95
-	url = git@github.com:calebj/pyRF95.git
 [submodule "tag/libraries/Adafruit_LSM9DS1"]
 	path = tag/libraries/Adafruit_LSM9DS1
 	url = https://github.com/adafruit/Adafruit_LSM9DS1.git
