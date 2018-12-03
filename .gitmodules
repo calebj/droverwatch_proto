@@ -10,3 +10,6 @@
 [submodule "basestation/pyRF95"]
 	path = basestation/pyRF95
 	url = https://github.com/calebj/pyRF95.git
+[submodule "tag/libraries/CircularBuffer"]
+	path = tag/libraries/CircularBuffer
+	url = https://github.com/rlogiacco/CircularBuffer.git

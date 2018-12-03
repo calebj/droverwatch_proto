@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <RH_RF95.h>
+#include <CircularBuffer.h>
 
 #include <Adafruit_LSM9DS1.h>
 #include <Adafruit_Sensor.h>
@@ -19,6 +20,7 @@
 #define USE_LPF 1
 
 #define SAMPLE_COUNT 10
+#define SAMPLE_STEP 10
 
 const PROGMEM uint16_t serial_tag[] = {1, 18};
 
@@ -60,6 +62,7 @@ typedef struct {
 
 // buffer for samples to send
 imu_sample_t sample_buf[SAMPLE_COUNT];
+uint8_t sample_buf_idx = 0;
 
 typedef uint8_t ORIENTATION_T;
 static const ORIENTATION_T OR_UNKNOWN = 0;
@@ -142,7 +145,7 @@ roll_pitch_t read_accel_angles() {
   //ret.roll  = atan2(ay_f, az_f) * RAD_TO_DEG;
   //ret.pitch = atan(-ax_f / sqrt(yy_zz)) * RAD_TO_DEG;
   ret.roll  = atan(ay_f / hyp2(ax_f, az_f)) * RAD_TO_DEG;
-  ret.pitch = atan2(-ax_f, az_f) * RAD_TO_DEG;
+  ret.pitch = atan2(ax_f, az_f) * RAD_TO_DEG;
 
   ret.accel_mag = hyp3(a.acceleration.x, a.acceleration.y, a.acceleration.z);
 
@@ -275,7 +278,7 @@ void loop() {
   compAngleX = (1 - COMP_RATIO) * (compAngleX + gyroXrate * dt) + COMP_RATIO * rp.roll;
   compAngleY = (1 - COMP_RATIO) * (compAngleY + gyroYrate * dt) + COMP_RATIO * rp.pitch;
 
-  if (loop_i > 0 && loop_i % SAMPLE_COUNT == 0) {
+  if (loop_i > 0 && loop_i % (SAMPLE_STEP * SAMPLE_COUNT) == 0) {
 #if USE_SERIAL
     Serial.print("atan\t"); Serial.print(rp.roll);
     Serial.print("\t"); Serial.print(rp.pitch); Serial.print("\t");  
@@ -308,7 +311,8 @@ void loop() {
     Serial.print("\t");
     Serial.print(chain);
     Serial.print("\tact "); Serial.print(displacement * 100);
-    Serial.println();
+    Serial.print("\tsamp ");
+    Serial.println(sample_buf_idx);
 #endif
     tx_packet_t packet;
     packet.orientation = orientation;
@@ -316,24 +320,27 @@ void loop() {
     packet.angle_x = compAngleX;
     packet.angle_y = compAngleY;
     packet.displacement = displacement * 100;
-    memcpy(packet.samples, sample_buf, SAMPLE_COUNT*sizeof(imu_sample_t));
+    memcpy(packet.samples, sample_buf, sample_buf_idx*sizeof(imu_sample_t));
 
     displacement = 0;
+    sample_buf_idx = 0;
     ledState = HIGH;
     blink_on = timer;
     digitalWrite(LED_BUILTIN, ledState);
 
-    // fire and forget. RH will block if a transmission is active.
+    // Fire and forget; RadioHead will block here if a transmission is active.
     send_packet(packet);
   }
 
-  uint8_t sample_buf_idx = loop_i % SAMPLE_COUNT;
-  sample_buf[sample_buf_idx].ax = ax_f;
-  sample_buf[sample_buf_idx].ay = ay_f;
-  sample_buf[sample_buf_idx].az = az_f;
-  sample_buf[sample_buf_idx].wx = gyroXrate;
-  sample_buf[sample_buf_idx].wy = gyroYrate;
-  sample_buf[sample_buf_idx].dt_us = dt_us >> 2;
+  if(loop_i % SAMPLE_STEP == 0) {
+    sample_buf[sample_buf_idx].ax = ax_f;
+    sample_buf[sample_buf_idx].ay = ay_f;
+    sample_buf[sample_buf_idx].az = az_f;
+    sample_buf[sample_buf_idx].wx = gyroXrate;
+    sample_buf[sample_buf_idx].wy = gyroYrate;
+    sample_buf[sample_buf_idx].dt_us = (dt_us*SAMPLE_STEP) >> 2;
+    sample_buf_idx++;  // wrap around
+  }
 
   if (timer - blink_on >= 100 && ledState) {
     ledState = LOW;

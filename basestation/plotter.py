@@ -71,7 +71,7 @@ class Plotter:
         dl.set_label('Displacement (m)')
         ax2.add_line(dl)
         ax2.legend()
-        ax2.set_ylim([0, 2])
+        ax2.set_ylim([0, 10])
         ax2.set_xlim([0, WINDOW])
 
         ax3 = self.ax3 = self.fig.add_subplot(233)
@@ -162,7 +162,7 @@ class Plotter:
         self.v_line.set_data(p_times, [p.vbatt for p in self.window])
 
         pitches = [p.angle_y for p in self.window]
-        pitches = [(180 + p) if p < 0 else (-180 + p) for p in pitches]
+        # pitches = [(180 + p) if p < 0 else (-180 + p) for p in pitches]
         rolls = [p.angle_x for p in self.window]
         self.ol.set_data(rolls, pitches)
         self.ola.set_data([rolls[-10:]], [pitches[-10:]])
@@ -174,10 +174,10 @@ class Plotter:
         orientation = self.window[-1].orientation
         cycles = self.window[-1].chain
 
-        if cycles > 10:
+        if cycles > 3:
             ann = orientation.name.lower()
         else:
-            ann = "steady" + "." * (cycles//3)
+            ann = "steady" + "." * (cycles)
 
         self.o_ann = self.ax3.annotate(ann, xy=(rolls[-1], pitches[-1]),
                                        xytext=(rolls[-1] + 5, pitches[-1] + 5),
