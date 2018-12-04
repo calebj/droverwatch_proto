@@ -221,7 +221,7 @@ void setup() {
   // Defaults are +13dBm, Bw = 125 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on
   // Both the tag and base configuration must match.
 
-  rf95.setModemConfig(RH_RF95::ModemConfigChoice::Bw500Cr45Sf128);
+  rf95.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr45Sf128);
 
   if (!rf95.setFrequency(RF95_FREQ)) {
     Serial.println("setFrequency failed");

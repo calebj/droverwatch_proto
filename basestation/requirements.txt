@@ -1,11 +1,11 @@
-# pyRF95 is a fork for now
+# pyRF95 is a fork for now, see submodule
+#pyRF95
 
 # LCD
 RPi.GPIO
 
-# Neopixel
-adafruit-circuitpython-neopixel
-Adafruit-Blinka
+# LEDs
+gpiozero
 
 # alerts
 twilio

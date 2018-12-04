@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
-# from math import log10
 from multiprocessing.connection import Client as mpClient
 import os
 import pathlib
-# from pprint import pprint
 import signal
 import subprocess
 from time import sleep
@@ -14,12 +12,10 @@ import threading
 import traceback
 from typing import Optional
 
-#import board
-#import neopixel
 from gpiozero import RGBLED
 import RPi.GPIO as GPIO
 
-from structures import Orientation, RadioPacket, StateTracker, State  # , IMUSample
+from structures import Orientation, RadioPacket, StateTracker, State
 
 try:
     import twilio
@@ -44,15 +40,18 @@ CWD = pathlib.Path(os.path.dirname(os.path.realpath(__file__)))
 
 ## BEGIN VARIABLE DECLARATIONS ##
 
+ALARM_SOUND = str(CWD / "BaseAlarmLoop_clip.wav")
+TTS_SCRIPT = str(CWD / "say.sh")
+
 PLT_DEFAULT_PORT = 56700
 ACTIVE_SLEEP = 2
 
-TWILIO_SID = "ACe3e295a5969e040e0ca29e0061c8ee2f"
-TWILIO_AUTH  = "03820cb03da55ec7024e87f8336b6452"
-TWILIO_NUMBER = "+13462585671"
+TWILIO_SID = "..."
+TWILIO_AUTH  = "..."
+TWILIO_NUMBER = "+1..."
 
-SENDGRID_API_KEY = "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"
-SENDGRID_FROM_ADDRESS = "alerts@bovineintervention.com"
+SENDGRID_API_KEY = "..."
+SENDGRID_FROM_ADDRESS = "alerts@yourdomain.com"
 
 RF95_SPI_CS = 0
 RF95_IRQ_PIN = 12
@@ -78,8 +77,6 @@ SEGMENTS = {
 # Common Cathode: active segment pins must be high and digit pin low
 SEGMENT_PINS = (24, 25, 26, 13, 6, 5, 23, 19)  # A, B, C, D, E, F, G, dot
 DIGIT_PINS = (27, 22)  # tens, ones
-# NEOPIXEL_PIN = board.D18
-# NEOPIXEL_COUNT = 4
 RGBLED_PINS = (4, 20, 16)
 
 RED = (1, 0, 0)
@@ -189,7 +186,7 @@ class CommandThread(threading.Thread):
 
         while self.proc.returncode is None and not self.stop_flag:
             try:
-                self.result = self.proc.wait(0.01)
+                self.result = self.proc.wait(0.05)
             except subprocess.TimeoutExpired:
                 pass
 
@@ -234,7 +231,7 @@ class AlertHarness:
         else:
             r = self.radio = rf95.RF95(cs=RF95_SPI_CS, int_pin=RF95_IRQ_PIN, reset_pin=RF95_RESET_PIN)
             assert r.init(), "failed to intialize radio"
-            r.set_modem_config(rf95.Bw500Cr45Sf128)
+            r.set_modem_config(rf95.Bw125Cr45Sf128)
             r.set_frequency(RF95_FREQ)
 
         self._args = args
@@ -255,8 +252,6 @@ class AlertHarness:
         self.emails = args.email
 
         self.stopping = False
-        #self.leds = neopixel.NeoPixel(NEOPIXEL_PIN, NEOPIXEL_COUNT, pixel_order=neopixel.GRB)
-        #self.leds.fill((0,0,0))
         self.led = RGBLED(*RGBLED_PINS)
 
         self.lcd_thread = LCDThread(SEGMENT_PINS, DIGIT_PINS)
@@ -266,6 +261,7 @@ class AlertHarness:
 
         self.monitor_thread = BackgroundThread(self.status_loop, start=False)
         self.announce_thread = None
+        self._buzzer = False
 
         if twilio is not None:
             self.twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
@@ -319,6 +315,7 @@ class AlertHarness:
         personalization = Personalization()
 
         for email in self.emails:
+            email = Email(email)
             personalization.add_to(email)
 
         from_email = Email(SENDGRID_FROM_ADDRESS)
@@ -379,11 +376,11 @@ class AlertHarness:
                 return RadioPacket.from_bytes(rxbuf, rssi, timestamp=timestamp)
 
     def run_test(self):
-        print("Test mode: will simulate an alert in 5 seconds")
-        sleep(5)
+        print("Test mode: will simulate an alert in 10 seconds")
+        sleep(10)
         self.show_alert(42)
-        print("Test mode: returning to normal in 5 seconds")
-        sleep(5)
+        print("Test mode: returning to normal in 10 seconds")
+        sleep(10)
         self.clear_alert()
         print("Test mode: will exit in 5 seconds")
         sleep(5)
@@ -445,7 +442,8 @@ class AlertHarness:
         self.led.pulse(on_color=RED)
 
         msg = "Tag %s is in distress!" % tag
-        self.announce(msg)
+        self.announce_msg = msg
+        self.announce()
 
         self.send_email("Bovine Intervention alert", msg)
         self.send_sms("Bovine Intervention alert: " + msg)
@@ -454,26 +452,34 @@ class AlertHarness:
         print("clearing alert")
         self.led.blink(on_color=GREEN, on_time=0.05, off_time=5 - 0.05)
         self.lcd_thread.clear()
+        self.announce_msg = None
 
         if self.announce_thread:
             self.announce_thread.stop()  # block
 
     def announce_cb(self, result):
-        # reset to None
-        self.announce_thread = None
+        if self.announce_msg is None or self.stopping:
+            # reset to None
+            self.announce_thread = None
+            self._buzzer = False
+        elif self._buzzer:
+            self._buzzer = False
+            self.announce_thread = CommandThread([TTS_SCRIPT, self.announce_msg], self.announce_cb)
+        else:
+            self._buzzer = True
+            self.announce_thread = CommandThread(["mplayer", "-really-quiet", ALARM_SOUND], self.announce_cb)
 
-    def announce(self, text: str):
+    def announce(self):
         if self.announce_thread:
             self.announce_thread.join()  # block
 
-        self.announce_thread = CommandThread([str(CWD / "say.sh"), text], self.announce_cb)
+        self.announce_thread = CommandThread(["mplayer", ALARM_SOUND], self.announce_cb)
+        self._buzzer = True
 
     def shutdown(self):
         self.stopping = True
         self.lcd_thread.stop()
         self.monitor_thread.join()
-        #self.leds.fill((0, 0, 0))
-        #self.leds.deinit()
         self.led.close()
         #GPIO.cleanup()
 
