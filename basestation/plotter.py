@@ -10,7 +10,7 @@ from matplotlib.lines import Line2D
 import matplotlib.animation as animation
 import mpl_toolkits.mplot3d.axes3d as p3
 
-from structures import Orientation, RadioPacket, IMUSample
+from structures import Orientation, RadioPacket, StateTracker, State
 
 ADDRESS = ("0.0.0.0", 56700)
 WINDOW = 10
@@ -37,6 +37,7 @@ class Plotter:
         self.queue = deque(maxlen=maxlen)
         self.ani = None
         self.window = deque()
+        self.states = StateTracker()
 
         self.fig = plt.figure()
 
@@ -62,6 +63,7 @@ class Plotter:
         ax4.set_ylim([-360, 360])
         ax4.set_xlim([0, WINDOW])
         plt.legend((wxl, wyl), ('ωx', 'ωy'))
+        self.fig.suptitle('Waiting for data', fontsize=16)
 
         self.ax1.set_ylim([-10, 10])
         self.ax1.set_xlim([0, WINDOW])
@@ -116,6 +118,7 @@ class Plotter:
                             data = conn.recv()
                             packet = RadioPacket.from_bytes(*data)
                             self.queue.append(packet)
+                            self.states.update(packet)
                 except Exception:
                     continue
 
@@ -184,6 +187,17 @@ class Plotter:
                                        color = "purple", fontsize=12)
 
         self.rssi_line.set_data(p_times, [p.rssi for p in self.window])
+
+        pkt = self.window[-1]
+        state = self.states.state_for(pkt.tag)
+        status = 'Tag %d status: %s' % (pkt.tag, state.name.lower())
+
+        if state is State.DISTRESS:
+            self.fig.patch.set_facecolor("red")
+        else:
+            self.fig.patch.set_facecolor("white")
+
+        self.fig.suptitle(status, fontsize=16)
 
         #self.ax1.set_xticklabels(times)
 

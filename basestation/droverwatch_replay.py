@@ -4,6 +4,7 @@ import argparse
 # from math import log10
 from multiprocessing.connection import Client as mpClient
 import os
+import pathlib
 # from pprint import pprint
 import signal
 import subprocess
@@ -13,7 +14,7 @@ import threading
 import traceback
 from typing import Optional
 
-from structures import Orientation, RadioPacket, StateTracker  # , IMUSample
+from structures import Orientation, RadioPacket, StateTracker, State # , IMUSample
 
 try:
     import twilio
@@ -28,6 +29,8 @@ try:
 except ImportError:
     print("Sendgrid not available")
     sendgrid = None
+
+CWD = pathlib.Path(os.path.dirname(os.path.realpath(__file__)))
 
 ## BEGIN VARIABLE DECLARATIONS ##
 
@@ -248,13 +251,10 @@ class AlertHarness:
 
                 self.known_tags.add(packet.tag)
 
-                if packet.chain < 50:  # ignore unless condition has lasted 5 cycles
-                    continue
-
-                if packet.orientation is not Orientation.UPRIGHT and packet.tag not in self.trouble_tags:
+                if self.states.state_for(packet.tag) is State.DISTRESS and packet.tag not in self.trouble_tags:
                     self.trouble_tags.add(packet.tag)
                     self.show_alert(packet.tag)
-                elif packet.orientation is Orientation.UPRIGHT and packet.tag in self.trouble_tags:
+                elif packet.tag in self.trouble_tags:
                     self.trouble_tags.remove(packet.tag)
                     self.clear_alert()
 
@@ -296,7 +296,7 @@ class AlertHarness:
         if self.announce_thread:
             self.announce_thread.join()  # block
 
-        self.announce_thread = CommandThread(["./say.sh", text], self.announce_cb)
+        self.announce_thread = CommandThread([str(CWD / "say.sh"), text], self.announce_cb)
 
     def shutdown(self):
         self.stopping = True

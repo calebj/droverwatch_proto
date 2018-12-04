@@ -4,6 +4,7 @@ import argparse
 # from math import log10
 from multiprocessing.connection import Client as mpClient
 import os
+import pathlib
 # from pprint import pprint
 import signal
 import subprocess
@@ -13,11 +14,12 @@ import threading
 import traceback
 from typing import Optional
 
-import board
-import neopixel
+#import board
+#import neopixel
+from gpiozero import RGBLED
 import RPi.GPIO as GPIO
 
-from structures import Orientation, RadioPacket, StateTracker  # , IMUSample
+from structures import Orientation, RadioPacket, StateTracker, State  # , IMUSample
 
 try:
     import twilio
@@ -37,6 +39,8 @@ try:
     from pyRF95 import rf95
 except ImportError:
     rf95 = None
+
+CWD = pathlib.Path(os.path.dirname(os.path.realpath(__file__)))
 
 ## BEGIN VARIABLE DECLARATIONS ##
 
@@ -74,7 +78,13 @@ SEGMENTS = {
 # Common Cathode: active segment pins must be high and digit pin low
 SEGMENT_PINS = (24, 25, 26, 13, 6, 5, 23, 19)  # A, B, C, D, E, F, G, dot
 DIGIT_PINS = (27, 22)  # tens, ones
-NEOPIXEL_PIN = board.D18
+# NEOPIXEL_PIN = board.D18
+# NEOPIXEL_COUNT = 4
+RGBLED_PINS = (4, 20, 16)
+
+RED = (1, 0, 0)
+GREEN = (0, 1, 0)
+YELLOW = (1, 1, 0)
 
 GPIO.setup(SEGMENT_PINS + DIGIT_PINS, GPIO.OUT)
 
@@ -245,7 +255,9 @@ class AlertHarness:
         self.emails = args.email
 
         self.stopping = False
-        self.leds = neopixel.NeoPixel(NEOPIXEL_PIN, 1, pixel_order=neopixel.RGBW)
+        #self.leds = neopixel.NeoPixel(NEOPIXEL_PIN, NEOPIXEL_COUNT, pixel_order=neopixel.GRB)
+        #self.leds.fill((0,0,0))
+        self.led = RGBLED(*RGBLED_PINS)
 
         self.lcd_thread = LCDThread(SEGMENT_PINS, DIGIT_PINS)
 
@@ -367,11 +379,11 @@ class AlertHarness:
                 return RadioPacket.from_bytes(rxbuf, rssi, timestamp=timestamp)
 
     def run_test(self):
-        print("Test mode: will simulate an alert in 10 seconds")
-        sleep(1)
+        print("Test mode: will simulate an alert in 5 seconds")
+        sleep(5)
         self.show_alert(42)
         print("Test mode: returning to normal in 5 seconds")
-        sleep(1)
+        sleep(5)
         self.clear_alert()
         print("Test mode: will exit in 5 seconds")
         sleep(5)
@@ -404,13 +416,11 @@ class AlertHarness:
 
                 self.known_tags.add(packet.tag)
 
-                if packet.chain < 50:  # ignore unless condition has lasted 5 cycles
-                    continue
-
-                if packet.orientation is not Orientation.UPRIGHT and packet.tag not in self.trouble_tags:
-                    self.trouble_tags.add(packet.tag)
-                    self.show_alert(packet.tag)
-                elif packet.orientation is Orientation.UPRIGHT and packet.tag in self.trouble_tags:
+                if self.states.state_for(packet.tag) is State.DISTRESS:
+                    if packet.tag not in self.trouble_tags:
+                        self.trouble_tags.add(packet.tag)
+                        self.show_alert(packet.tag)
+                elif packet.tag in self.trouble_tags:
                     self.trouble_tags.remove(packet.tag)
                     self.clear_alert()
 
@@ -432,7 +442,7 @@ class AlertHarness:
     def show_alert(self, tag: int):
         print("showing alert for tag", tag)
         self.lcd_thread.set_value(tag)
-        self.leds[0] = (255, 0, 0, 0)
+        self.led.pulse(on_color=RED)
 
         msg = "Tag %s is in distress!" % tag
         self.announce(msg)
@@ -442,7 +452,7 @@ class AlertHarness:
 
     def clear_alert(self):
         print("clearing alert")
-        self.leds[0] = (0, 255, 0, 0)
+        self.led.blink(on_color=GREEN, on_time=0.05, off_time=5 - 0.05)
         self.lcd_thread.clear()
 
         if self.announce_thread:
@@ -456,13 +466,16 @@ class AlertHarness:
         if self.announce_thread:
             self.announce_thread.join()  # block
 
-        self.announce_thread = CommandThread(["./say.sh", text], self.announce_cb)
+        self.announce_thread = CommandThread([str(CWD / "say.sh"), text], self.announce_cb)
 
     def shutdown(self):
         self.stopping = True
         self.lcd_thread.stop()
         self.monitor_thread.join()
-        self.leds[0] = (0, 0, 0, 0)
+        #self.leds.fill((0, 0, 0))
+        #self.leds.deinit()
+        self.led.close()
+        #GPIO.cleanup()
 
         if self.announce_thread:
             self.announce_thread.stop()
